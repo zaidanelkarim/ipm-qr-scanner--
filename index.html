@@ -555,111 +555,108 @@
   // 8. MEMULAI SCANNER
   // ==========================================
 
-  async function startScanner() {
+  
+async function startScanner() {
+  if (isStarting || isScanning || waitingResult) return;
 
-    if (isStarting || isScanning || waitingResult) {
-      return;
+  isStarting = true;
+  startBtn.disabled = true;
+
+  setStatus('Menyiapkan kamera...', 'info');
+
+  try {
+    if (!checkConnection()) {
+      throw new Error('Koneksi dashboard tidak tersedia.');
     }
 
-    isStarting = true;
-    startBtn.disabled = true;
+    await prepareAudio();
 
-    setStatus('Menyiapkan kamera...', 'info');
-
-    try {
-
-      if (!checkConnection()) {
-        throw new Error('Koneksi dashboard tidak tersedia.');
-      }
-
-      await prepareAudio();
-
-      if (typeof Html5Qrcode === 'undefined') {
-        throw new Error('Library QR scanner belum dimuat.');
-      }
-
-      if (!cameras.length) {
-        await loadCameras();
-      }
-
-      const cameraId = select.value;
-
-      if (!cameraId) {
-        throw new Error('Pilih kamera terlebih dahulu.');
-      }
-
-      scanner = new Html5Qrcode(
-        'reader',
-        {
-          formatsToSupport: [
-            Html5QrcodeSupportedFormats.QR_CODE
-          ],
-          verbose: false
-        }
-      );
-
-      const scanConfig = {
-        fps: 15,
-
-        qrbox: function(width, height) {
-
-          const size = Math.floor(
-            Math.min(width, height) * 0.85
-          );
-
-          return {
-            width: Math.max(150, Math.min(size, 350)),
-            height: Math.max(150, Math.min(size, 350))
-          };
-
-        },
-
-        aspectRatio: 1,
-        disableFlip: false
-      };
-
-      await scanner.start(
-        { deviceId: { exact: cameraId } },
-        scanConfig,
-        onScanSuccess,
-        function(errorMessage) {
-          // Tidak terdeteksi pada satu frame adalah normal.
-        }
-      );
-
-      isScanning = true;
-
-      stopBtn.disabled = false;
-      startBtn.disabled = false;
-
-      setStatus(
-        'KAMERA AKTIF. Arahkan QR Code ke kamera.',
-        'ok'
-      );
-
-      console.log('Kamera berhasil dijalankan.');
-
-    } catch (error) {
-
-      console.error('Kesalahan scanner:', error);
-
-      await stopCamera();
-
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-
-      setStatus(
-        'Kamera gagal dijalankan: ' +
-        (error.message || String(error)),
-        'err'
-      );
-
-    } finally {
-
-      isStarting = false;
-
+    if (typeof Html5Qrcode === 'undefined') {
+      throw new Error('Library QR scanner belum dimuat.');
     }
+
+    if (!cameras.length) {
+      await loadCameras();
+    }
+
+    const cameraId = select.value;
+
+    if (!cameraId) {
+      throw new Error('Pilih kamera terlebih dahulu.');
+    }
+
+    if (scanner) {
+      try {
+        await scanner.clear();
+      } catch (e) {}
+      scanner = null;
+    }
+
+    scanner = new Html5Qrcode('reader', {
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.QR_CODE
+      ],
+      verbose: true
+    });
+
+    const scanConfig = {
+      fps: 20,
+
+      qrbox: function(width, height) {
+        const size = Math.floor(
+          Math.min(width, height) * 0.70
+        );
+
+        return {
+          width: Math.max(100, Math.min(size, 300)),
+          height: Math.max(100, Math.min(size, 300))
+        };
+      },
+
+      aspectRatio: 1.0,
+      disableFlip: false
+    };
+
+    await scanner.start(
+      { deviceId: { exact: cameraId } },
+      scanConfig,
+      onScanSuccess,
+      function(errorMessage) {
+        // Frame belum menemukan QR bukan berarti scanner gagal.
+      }
+    );
+
+    isScanning = true;
+
+    stopBtn.disabled = false;
+    startBtn.disabled = false;
+
+    setStatus(
+      'KAMERA AKTIF. Arahkan QR Code ke dalam kotak pemindaian.',
+      'ok'
+    );
+
+    console.log('Scanner aktif.');
+    console.log('Camera ID:', cameraId);
+
+  } catch (error) {
+    console.error('Kesalahan scanner:', error);
+
+    await stopCamera();
+
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+
+    setStatus(
+      'Kamera gagal dijalankan: ' +
+      (error.message || String(error)),
+      'err'
+    );
+
+  } finally {
+    isStarting = false;
   }
+}
 
   // ==========================================
   // 9. TOMBOL HENTIKAN
