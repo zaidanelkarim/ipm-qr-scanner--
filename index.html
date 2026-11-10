@@ -117,6 +117,20 @@
 
   <div id="reader"></div>
 
+  <label for="session-select" class="small-note">Sesi absensi</label>
+  <select id="session-select">
+    <option value="">-- Pilih sesi absensi --</option>
+    <option value="SESI_1">Sesi 1 - Kedatangan Peserta dan Panitia</option>
+    <option value="SESI_2">Sesi 2 - Pra Musycab</option>
+    <option value="SESI_3">Sesi 3 - Pembukaan Musycab</option>
+    <option value="SESI_4">Sesi 4 - Pemilihan Formatur</option>
+  </select>
+
+  <label for="scanner-pin" class="small-note">PIN scanner dari admin</label>
+  <input id="scanner-pin" type="password" inputmode="numeric" autocomplete="off"
+    placeholder="Masukkan PIN scanner"
+    style="width:100%;padding:13px;margin-top:10px;border:1px solid #45669b;border-radius:10px;background:#0b1630;color:#e5edff;font-size:15px;">
+
   <select id="camera-select" disabled>
     <option value="">Kamera belum aktif</option>
   </select>
@@ -162,10 +176,20 @@
   const SAME_QR_COOLDOWN_MS = 3000;  // jeda untuk QR yang sama
 
   const params = new URLSearchParams(location.search);
-  const returnOrigin = params.get('returnOrigin');
+  const requestedSessionId = params.get('sessionId') || '';
+
+  // URL Web App Apps Script yang diberikan admin.
+  const APPS_SCRIPT_URL =
+    'https://script.google.com/macros/s/AKfycbz_mA___kBP0ldvCj4uxTOZuat2EcrgNAGXQhjtxW37QzchIaKOkezHnOf7fZLR5W0y/exec';
 
   const statusEl = document.getElementById('status');
+  const sessionSelect = document.getElementById('session-select');
+  const pinInput = document.getElementById('scanner-pin');
   const select = document.getElementById('camera-select');
+
+  if (requestedSessionId && sessionSelect.querySelector('option[value="' + requestedSessionId + '"]')) {
+    sessionSelect.value = requestedSessionId;
+  }
   const startBtn = document.getElementById('start-btn');
   const stopBtn = document.getElementById('stop-btn');
   const modal = document.getElementById('result-modal');
@@ -190,27 +214,8 @@
     statusEl.className = 'status' + (type ? ' ' + type : '');
   }
 
-  function validReturnOrigin(value) {
-    try {
-      const url = new URL(value);
-      return url.protocol === 'https:' && url.origin === value.replace(/\/$/, '');
-    } catch (e) {
-      return false;
-    }
-  }
-
-  function hasDashboard() {
-    return !!(window.opener && !window.opener.closed &&
-              returnOrigin && validReturnOrigin(returnOrigin));
-  }
-
   function dashboardWarning() {
-    if (!window.opener || window.opener.closed) {
-      return 'Dashboard tidak terhubung. Buka scanner lewat tombol "Scanner Eksternal" di dashboard agar hasil scan terkirim.';
-    }
-    if (!returnOrigin || !validReturnOrigin(returnOrigin)) {
-      return 'Alamat dashboard tidak valid. Buka scanner dari dashboard absensi.';
-    }
+    // Scanner mengirim langsung ke Apps Script, bukan ke window.opener.
     return '';
   }
 
@@ -275,7 +280,7 @@
     if (isScanning) {
       setStatus('KAMERA AKTIF. Siap memindai peserta berikutnya.', 'ok');
     } else {
-      autoStart();
+      setStatus('Hasil scan selesai. Tekan Aktifkan Kamera untuk memulai.');
     }
   }
 
@@ -379,7 +384,68 @@
   // 9. KAMERA BERHASIL MEMINDAI QR
   // ==========================================
 
-  function onScanSuccess(decodedText) {
+  function normalizeParticipantId(decodedText) {
+    const raw = String(decodedText || '').trim();
+    if (!raw) return '';
+
+    let value = raw;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        value = parsed.ID_PESERTA || parsed.idPeserta || parsed.id_peserta ||
+          parsed.participantId || parsed.id || raw;
+      }
+    } catch (e) {}
+
+    value = String(value).trim().toUpperCase();
+    const match = value.match(/IPM-\\d+/);
+    return match ? match[0] : value;
+  }
+
+  function submitAttendanceToAppsScript(participantId, sessionId, pin) {
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      const query = new URLSearchParams({
+        action: 'scan',
+        id: participantId,
+        sessionId: sessionId,
+        pin: pin,
+        t: String(Date.now())
+      });
+
+      window.ipmScanCallback = function(response) {
+        clearTimeout(scanTimeout);
+        scanTimeout = null;
+        script.remove();
+        delete window.ipmScanCallback;
+        resolve(response || {
+          success: false,
+          status: 'EMPTY_RESPONSE',
+          message: 'Server tidak mengirimkan respons.'
+        });
+      };
+
+      script.onerror = function() {
+        clearTimeout(scanTimeout);
+        scanTimeout = null;
+        script.remove();
+        delete window.ipmScanCallback;
+        reject(new Error('Tidak dapat menghubungi server Apps Script. Periksa koneksi internet atau URL Web App.'));
+      };
+
+      scanTimeout = setTimeout(() => {
+        scanTimeout = null;
+        script.remove();
+        delete window.ipmScanCallback;
+        reject(new Error('Server tidak merespons dalam 20 detik. Silakan coba kembali.'));
+      }, RESULT_TIMEOUT_MS);
+
+      script.src = APPS_SCRIPT_URL + '?' + query.toString();
+      document.body.appendChild(script);
+    });
+  }
+
+  async function onScanSuccess(decodedText) {
     if (busy) return;
 
     const qrText = String(decodedText || '').trim();
@@ -395,35 +461,48 @@
     playBeep();
     vibrate();
 
-    // Tanpa dashboard, hasil tidak bisa dikirim.
-    if (!hasDashboard()) {
-      showResult(false, dashboardWarning() + ' (QR terbaca: ' + qrText + ')');
-      setStatus(dashboardWarning(), 'err');
+    const participantId = normalizeParticipantId(qrText);
+    const sessionId = sessionSelect.value;
+    const pin = String(pinInput.value || '').trim();
+
+    if (!/^IPM-\\d+$/i.test(participantId)) {
+      showResult(false, 'QR terbaca, tetapi format ID peserta tidak valid. ID: ' + qrText);
+      setStatus('QR bukan QR peserta yang valid.', 'err');
       return;
     }
 
-    setStatus('QR terbaca. Mengirim data ke dashboard...', 'info');
+    if (!sessionId) {
+      showResult(false, 'Pilih sesi absensi terlebih dahulu.');
+      setStatus('Sesi absensi belum dipilih.', 'warn');
+      return;
+    }
+
+    if (!pin) {
+      showResult(false, 'Masukkan PIN scanner yang diberikan admin.');
+      setStatus('PIN scanner belum diisi.', 'warn');
+      return;
+    }
+
+    setStatus('QR terbaca. Mengirim data langsung ke server...', 'info');
 
     try {
-      window.opener.postMessage(
-        { type: 'IPM_QR_SCAN', text: qrText },
-        returnOrigin
-      );
-    } catch (error) {
-      console.error('Kesalahan pengiriman:', error);
-      showResult(false, 'Gagal mengirim hasil pemindaian ke dashboard.');
-      return;
-    }
+      const result = await submitAttendanceToAppsScript(participantId, sessionId, pin);
+      const success = !!(result && result.success === true);
+      const participantName = result && result.participant
+        ? result.participant.nama
+        : '';
 
-    clearTimeout(scanTimeout);
-    scanTimeout = setTimeout(() => {
-      scanTimeout = null;
-      showResult(
-        false,
-        'Dashboard tidak memberi konfirmasi dalam 20 detik. Periksa dashboard lalu coba lagi.'
-      );
-      setStatus('Waktu tunggu konfirmasi habis.', 'err');
-    }, RESULT_TIMEOUT_MS);
+      let message = (result && result.message) ||
+        (success ? 'Absensi berhasil disimpan.' : 'Absensi gagal disimpan.');
+
+      if (result && result.time) message += ' Waktu: ' + result.time;
+
+      showResult(success, message, participantName);
+      setStatus(message, success ? 'ok' : 'err');
+    } catch (error) {
+      showResult(false, error.message || 'Gagal mengirim absensi.');
+      setStatus(error.message || 'Gagal mengirim absensi.', 'err');
+    }
   }
 
   function waitingForDashboard() {
@@ -564,33 +643,6 @@
   }
 
   // ==========================================
-  // 11. MENERIMA KONFIRMASI DASHBOARD
-  // ==========================================
-
-  window.addEventListener('message', event => {
-    if (event.origin !== returnOrigin) return;
-    if (event.source !== window.opener) return;
-
-    const data = event.data;
-    if (!data || data.type !== 'IPM_ATTENDANCE_RESULT') return;
-
-    clearTimeout(scanTimeout);
-    scanTimeout = null;
-
-    const success = data.success === true;
-
-    showResult(
-      success,
-      data.message || (success
-        ? 'Data kehadiran berhasil disimpan.'
-        : 'Data kehadiran gagal disimpan.'),
-      data.name || ''
-    );
-
-    setStatus(data.message || 'Proses absensi selesai.', success ? 'ok' : 'err');
-  });
-
-  // ==========================================
   // 12. EVENT TOMBOL
   // ==========================================
 
@@ -613,16 +665,8 @@
 
   document.getElementById('close-modal').addEventListener('click', closeResult);
 
-  // Jika pengguna kembali ke tab ini dan kamera mati, nyalakan lagi.
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      if (isScanning && scanner && !scanner.isScanning) {
-        stopCamera().then(autoStart);
-      } else {
-        autoStart();
-      }
-    }
-  });
+  // Kamera tidak dinyalakan otomatis saat halaman dibuka atau saat kembali ke tab.
+  // Pengguna harus menekan tombol Aktifkan Kamera secara langsung.
 
   window.addEventListener('beforeunload', () => {
     clearTimeout(scanTimeout);
@@ -630,15 +674,15 @@
   });
 
   // ==========================================
-  // 13. PEMERIKSAAN AWAL + KAMERA OTOMATIS
+  // 13. STATUS AWAL
   // ==========================================
 
-  const warn = dashboardWarning();
-  if (warn) setStatus(warn, 'warn');
-
-  // Coba nyalakan kamera otomatis. Jika browser butuh ketukan,
-  // tombol "Aktifkan Kamera" tetap tersedia.
-  setTimeout(autoStart, 300);
+  setStatus(
+    requestedSessionId
+      ? 'Sesi dari dashboard: ' + sessionSelect.options[sessionSelect.selectedIndex].text + '. Masukkan PIN lalu tekan Aktifkan Kamera.'
+      : 'Pilih sesi absensi, masukkan PIN scanner, lalu tekan Aktifkan Kamera.',
+    'info'
+  );
 
 })();
 </script>
