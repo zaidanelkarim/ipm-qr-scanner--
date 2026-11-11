@@ -25,8 +25,8 @@
     <h1>Scanner QR Code IPM</h1>
     <p class="muted">Arahkan kamera ke QR Code peserta. Absensi dicatat langsung ke server dan muncul di dashboard admin.</p>
 
-    <label for="pin-input">PIN Scanner (6-8 karakter)</label>
-    <input id="pin-input" type="password" maxlength="8" placeholder="261415Pc" autocomplete="off">
+    <label for="pin-input">PIN Scanner (32 karakter)</label>
+    <input id="pin-input" type="password" maxlength="32" placeholder="9c67042fb8ec4a44b1b0323b55fc4523" autocomplete="off">
 
     <label for="session-select">Sesi Absensi</label>
     <select id="session-select" aria-label="Pilih sesi">
@@ -74,7 +74,7 @@
     statusEl.className = 'status' + (type ? ' ' + type : '');
   }
 
-  function validPin(pin) { return /^[A-Za-z0-9]{6,8}$/.test(pin); }
+ function validPin(pin) { return /^[A-Za-z0-9]{32}$/.test(pin); }
 
   if (!WEB_APP_URL.startsWith('https://script.google.com/macros/s/')) {
     status('URL Web App belum dikonfigurasi pada file scanner.', 'err');
@@ -87,7 +87,7 @@
     return new Promise((resolve, reject) => {
       const pin = pinInput.value.trim();
       if (!validPin(pin)) {
-        reject(new Error('PIN scanner harus 6-8 karakter (huruf/angka).'));
+       reject(new Error('PIN scanner harus 32 karakter (huruf/angka).'));
         return;
       }
       try { sessionStorage.setItem('scanner-pin', pin); } catch (e) {}
@@ -147,7 +147,7 @@
       return;
     }
     if (!validPin(pinInput.value.trim())) {
-      status('Isi PIN scanner (6-8 karakter huruf/angka) terlebih dahulu.', 'err');
+       status('Isi PIN scanner (32 karakter huruf/angka) terlebih dahulu.', 'err');
       pinInput.focus();
       return;
     }
