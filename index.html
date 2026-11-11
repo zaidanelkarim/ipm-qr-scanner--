@@ -42,66 +42,129 @@ select{width:100%;padding:10px;margin:12px 0;border-radius:9px;background:#0b163
   const startBtn = document.getElementById('start-btn');
   const stopBtn = document.getElementById('stop-btn');
   const cameraSelect = document.getElementById('camera-select');
-  let scanner = null, cameras = [], sending = false;
+  let scanner = null;
+  let cameras = [];
+  let sending = false;
+  let restartTimer = null;
+  let lastText = '';
+  let lastSentAt = 0;
 
   function setStatus(message, kind) {
     statusEl.textContent = message;
     statusEl.className = kind || '';
   }
+
   async function stopCamera() {
-    if (!scanner) return;
-    const active = scanner; scanner = null;
-    try { await active.stop(); } catch(e) {}
-    try { await active.clear(); } catch(e) {}
-    startBtn.disabled = false; stopBtn.disabled = true;
+    const active = scanner;
+    scanner = null;
+    if (active) {
+      try { await active.stop(); } catch (e) {}
+      try { await active.clear(); } catch (e) {}
+    }
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
   }
+
   async function startCamera() {
-    if (scanner) return;
+    if (scanner || sending) return;
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       setStatus('Kamera memerlukan halaman HTTPS dan browser yang mendukung akses kamera.', 'bad');
+      return;
+    }
+    if (!returnOrigin || !window.opener || window.opener.closed) {
+      setStatus('Dashboard tidak terhubung. Buka scanner melalui tombol Scanner Eksternal pada dashboard.', 'bad');
       return;
     }
     try {
       cameras = await Html5Qrcode.getCameras();
       cameraSelect.innerHTML = '<option value="">Kamera belakang (otomatis)</option>';
-      cameras.forEach((cam,i) => {
-        const option=document.createElement('option');
-        option.value=cam.id; option.textContent=cam.label || ('Kamera '+(i+1));
+      cameras.forEach((cam, i) => {
+        const option = document.createElement('option');
+        option.value = cam.id;
+        option.textContent = cam.label || ('Kamera ' + (i + 1));
         cameraSelect.appendChild(option);
       });
-      scanner = new Html5Qrcode('reader',{formatsToSupport:[Html5QrcodeSupportedFormats.QR_CODE]});
-      const cameraConfig = cameraSelect.value || {facingMode:'environment'};
-      await scanner.start(cameraConfig,{fps:12,qrbox:{width:250,height:250},aspectRatio:1},
-        async decodedText => {
-          if(sending) return;
-          sending=true; setStatus('QR terbaca. Mengirim hasil ke dashboard...','ok');
-          await stopCamera();
-          if(!window.opener || window.opener.closed) {
-            setStatus('Dashboard asal tidak ditemukan. Buka scanner dari tombol Scanner Eksternal di dashboard.','bad');
-            sending=false; return;
-          }
-          if(!returnOrigin) {
-            setStatus('Alamat tujuan dashboard tidak ditemukan. Buka ulang scanner dari dashboard.','bad');
-            sending=false; return;
-          }
-          window.opener.postMessage({type:'IPM_QR_SCAN',text:decodedText},returnOrigin);
-          setStatus('Hasil QR dikirim. Tab scanner akan ditutup.','ok');
-          setTimeout(()=>window.close(),700);
-        },()=>{});
-      startBtn.disabled=true; stopBtn.disabled=false;
-      setStatus('Kamera aktif. Arahkan QR Code peserta ke kotak pemindaian.','ok');
-    } catch(err) {
-      console.error(err); scanner=null; startBtn.disabled=false; stopBtn.disabled=true;
-      setStatus('Kamera gagal dibuka: '+(err?.message || err)+'. Periksa izin kamera dan tutup aplikasi lain yang memakai kamera.','bad');
+
+      const activeScanner = new Html5Qrcode('reader', {
+        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE]
+      });
+      scanner = activeScanner;
+      const cameraConfig = cameraSelect.value || { facingMode: 'environment' };
+      await activeScanner.start(cameraConfig, {
+        fps: 12,
+        qrbox: { width: 250, height: 250 },
+        aspectRatio: 1
+      }, async decodedText => {
+        const now = Date.now();
+        if (sending || (decodedText === lastText && now - lastSentAt < 2500)) return;
+        sending = true;
+        lastText = decodedText;
+        lastSentAt = now;
+        setStatus('QR terbaca. Mengirim data ke dashboard Admin...', 'ok');
+        await stopCamera();
+
+        if (!window.opener || window.opener.closed) {
+          sending = false;
+          setStatus('Dashboard terputus. Buka kembali scanner dari dashboard.', 'bad');
+          return;
+        }
+        window.opener.postMessage({ type: 'IPM_QR_SCAN', text: decodedText }, returnOrigin);
+        setStatus('QR terkirim. Menunggu hasil pencatatan dari dashboard...', 'ok');
+      }, () => {});
+
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      setStatus('Kamera aktif. Arahkan QR Code peserta ke kotak pemindaian.', 'ok');
+    } catch (err) {
+      console.error(err);
+      if (scanner) {
+        const failed = scanner;
+        scanner = null;
+        try { await failed.stop(); } catch (e) {}
+        try { await failed.clear(); } catch (e) {}
+      }
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      setStatus('Kamera gagal dibuka: ' + (err?.message || err) + '. Periksa izin kamera.', 'bad');
     }
   }
-  startBtn.addEventListener('click',startCamera);
-  stopBtn.addEventListener('click',stopCamera);
-  cameraSelect.addEventListener('change',async()=>{if(scanner){await stopCamera();await startCamera();}});
-  document.getElementById('back-btn').addEventListener('click',()=> {
-    if(window.opener && !window.opener.closed) window.close(); else history.back();
+
+  // Dashboard mengirim hasil setelah server menyimpan / menolak absensi.
+  window.addEventListener('message', event => {
+    if (event.origin !== returnOrigin || event.source !== window.opener) return;
+    const data = event.data || {};
+    if (data.type !== 'IPM_ATTENDANCE_RESULT') return;
+
+    const detail = data.name ? (' · ' + data.name + ' (' + (data.id || '-') + ')') : '';
+    const session = data.session ? (' · ' + data.session) : '';
+    setStatus((data.success ? 'BERHASIL: ' : 'PERINGATAN: ') + (data.message || 'Hasil absensi diterima.') + detail + session,
+      data.success ? 'ok' : 'bad');
+
+    sending = false;
+    if (restartTimer) clearTimeout(restartTimer);
+    // Kamera diaktifkan kembali otomatis agar siap untuk peserta berikutnya.
+    restartTimer = setTimeout(() => {
+      if (!document.hidden && !scanner) startCamera();
+    }, 1200);
   });
-  window.addEventListener('beforeunload',()=>{if(scanner){try{scanner.stop();}catch(e){}}});
+
+  startBtn.addEventListener('click', startCamera);
+  stopBtn.addEventListener('click', stopCamera);
+  cameraSelect.addEventListener('change', async () => {
+    if (scanner) {
+      await stopCamera();
+      await startCamera();
+    }
+  });
+  document.getElementById('back-btn').addEventListener('click', async () => {
+    await stopCamera();
+    if (window.opener && !window.opener.closed) window.close();
+    else history.back();
+  });
+  window.addEventListener('beforeunload', () => {
+    if (restartTimer) clearTimeout(restartTimer);
+    if (scanner) { try { scanner.stop(); } catch (e) {} }
+  });
 })();
 </script>
 </body></html>
