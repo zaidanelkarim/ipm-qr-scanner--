@@ -31,7 +31,7 @@
 (() => {
   const params = new URLSearchParams(location.search);
   const returnOrigin = params.get('returnOrigin');
-  const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbz_mA___kBP0ldvCj4uxTOZuat2EcrgNAGXQhjtxW37QzchIaKOkezHnOf7fZLR5W0y/exec';
+  const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyxWz7LdGZjef31fUVcNnxC83a9tBB8Jz6LEsXgO588igXx47O5BnkS9wBddz6lE9kU/exec';
   const SCANNER_PIN = 'Panlih26';
   const SESSION_ID = params.get('sessionId') || 'SESI_1';
   const statusEl = document.getElementById('status');
@@ -52,22 +52,61 @@
       return u.protocol === 'https:' && u.origin === value.replace(/\/$/, '');
     } catch (e) { return false; }
   }
-  if (!WEB_APP_URL.startsWith('https://script.google.com/macros/s/') || !/^[A-Za-z0-9]{6,8}$/.test(SCANNER_PIN)) {
-    status('Isi URL Web App dan SCANNER_PIN 6–8 karakter (huruf/angka) pada file scanner.', 'err');
+
+  const WEB_APP_URL_CLEAN = String(WEB_APP_URL || '').trim();
+  const SCANNER_PIN_CLEAN = String(SCANNER_PIN || '').trim();
+
+  const CONFIG_VALID =
+    /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(WEB_APP_URL_CLEAN) &&
+    /^[A-Za-z0-9]{6,8}$/.test(SCANNER_PIN_CLEAN);
+
+  if (!CONFIG_VALID) {
+    status(
+      'URL Web App atau PIN scanner tidak valid. Periksa konfigurasi.',
+      'err'
+    );
     startBtn.disabled = true;
     throw new Error('Konfigurasi scanner belum lengkap.');
   }
 
   function sendToAttendanceServer(participantId) {
     return new Promise((resolve, reject) => {
-      const callbackName = 'ipmScanCallback';
-      const timeout = setTimeout(() => { cleanup(); reject(new Error('Server tidak merespons. Periksa koneksi internet.')); }, 15000);
-      function cleanup() { clearTimeout(timeout); delete window[callbackName]; if (script.parentNode) script.parentNode.removeChild(script); }
-      window[callbackName] = result => { cleanup(); resolve(result); };
-      const script = document.createElement('script');
-      const query = new URLSearchParams({ action:'scan', pin:SCANNER_PIN, id:participantId, sessionId:SESSION_ID, callback:callbackName, _:String(Date.now()) });
-      script.onerror = () => { cleanup(); reject(new Error('Tidak dapat menghubungi endpoint Apps Script.')); };
-      script.src = WEB_APP_URL + '?' + query.toString();
+      const callbackName = 'ipmScanCallback_' + Date.now();
+      let script = document.createElement('script');
+
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error('Server tidak merespons. Periksa koneksi internet.'));
+      }, 15000);
+
+      function cleanup() {
+        clearTimeout(timeout);
+        delete window[callbackName];
+        if (script && script.parentNode) {
+          script.parentNode.removeChild(script);
+        }
+      }
+
+      window[callbackName] = result => {
+        cleanup();
+        resolve(result);
+      };
+
+      const query = new URLSearchParams({
+        action: 'scan',
+        pin: SCANNER_PIN_CLEAN,
+        id: participantId,
+        sessionId: SESSION_ID,
+        callback: callbackName,
+        _: String(Date.now())
+      });
+
+      script.onerror = () => {
+        cleanup();
+        reject(new Error('Tidak dapat menghubungi endpoint Apps Script.'));
+      };
+
+      script.src = WEB_APP_URL_CLEAN + '?' + query.toString();
       document.head.appendChild(script);
     });
   }
