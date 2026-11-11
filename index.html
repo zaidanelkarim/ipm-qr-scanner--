@@ -26,7 +26,7 @@
     <p class="muted">Arahkan kamera ke QR Code peserta. Absensi dicatat langsung ke server dan muncul di dashboard admin.</p>
 
     <label for="pin-input">PIN Scanner (32 karakter)</label>
-    <input id="pin-input" type="password" maxlength="32" placeholder="9c67042fb8ec4a44b1b0323b55fc4523" autocomplete="off">
+    <input id="pin-input" type="password" maxlength="32" placeholder="1749150efa7245d08cb518691504a3a2" autocomplete="off">
 
     <label for="session-select">Sesi Absensi</label>
     <select id="session-select" aria-label="Pilih sesi">
@@ -47,7 +47,7 @@
 <script>
 (() => {
   const params = new URLSearchParams(location.search);
-  const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzCsHNWZgTbKR2u7WTKaDx0z8dZAprzvMUIizKDMZioGAM5zn4Ya5NhbjczZ7eAlceQ/exec';
+  const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwVhFyfZSq1MvXDx2cYwuGJXowZZ4TLZM6lmHTMP4YDwNlExdBEzajJPdkQb6_YB3fv/exec';
 
   // Dibuka dari dashboard laptop (ada returnOrigin) atau langsung dari HP.
   const SRC = params.has('returnOrigin') ? 'laptop' : 'hp';
