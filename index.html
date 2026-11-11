@@ -52,8 +52,8 @@
       return u.protocol === 'https:' && u.origin === value.replace(/\/$/, '');
     } catch (e) { return false; }
   }
-  if (!WEB_APP_URL.startsWith('https://script.google.com/macros/s/') || SCANNER_PIN.length < 32) {
-    status('Konfigurasi URL Web App atau SCANNER_PIN belum diisi pada file scanner.', 'err');
+  if (!WEB_APP_URL.startsWith('https://script.google.com/macros/s/') || !/^[A-Za-z0-9]{6,8}$/.test(SCANNER_PIN)) {
+    status('Isi URL Web App dan SCANNER_PIN 6–8 karakter (huruf/angka) pada file scanner.', 'err');
     startBtn.disabled = true;
     throw new Error('Konfigurasi scanner belum lengkap.');
   }
