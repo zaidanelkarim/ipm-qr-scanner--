@@ -1,170 +1,153 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Scanner QR Absensi IPM</title>
-<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-<style>
-:root{color-scheme:dark;font-family:Inter,system-ui,Arial,sans-serif}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:22px;color:#e5edff;background:#070e22}
-.wrap{max-width:560px;margin:0 auto}.panel{background:#101b36;border:1px solid rgba(148,163,184,.2);border-radius:20px;padding:22px;box-shadow:0 18px 48px #0004}
-h1{margin:0 0 8px;font-size:22px}p{color:#a9bad8;line-height:1.55}
-#reader{overflow:hidden;border-radius:14px;background:#071126;min-height:260px}#reader video{object-fit:cover!important;border-radius:14px}
-.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
-button{border:0;border-radius:10px;padding:12px 16px;font-weight:700;cursor:pointer;color:white;background:#2563eb}
-button.secondary{background:#263958}button:disabled{opacity:.55;cursor:not-allowed}
-#status{margin-top:14px;padding:12px;border-radius:10px;background:#172747;font-size:14px}
-.small{font-size:12px}.ok{color:#86efac}.bad{color:#fda4af}
-select{width:100%;padding:10px;margin:12px 0;border-radius:9px;background:#0b1630;color:#e5edff;border:1px solid #425578}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scanner QR IPM</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    *{box-sizing:border-box}body{margin:0;padding:22px;background:#070e22;color:#e5edff;font-family:'Plus Jakarta Sans',Arial,sans-serif}
+    .wrap{max-width:480px;margin:0 auto;background:#101b36;border:1px solid #00843D;border-radius:18px;padding:20px;box-shadow:0 18px 50px #0006}
+    h1{font-size:22px;margin:0 0 8px}.muted{color:#9aabc9;font-size:14px;line-height:1.5}
+    #reader{width:100%;margin:18px 0;border-radius:12px;overflow:hidden;background:#071126;min-height:240px}
+    button,select{width:100%;padding:13px;margin-top:10px;border:0;border-radius:10px;font-size:15px;font-weight:700}
+    button{background:#00843D;color:white;cursor:pointer}button.secondary{background:#24395f;color:#dbe7ff}button:disabled{opacity:.55;cursor:not-allowed}
+    select{background:#0b1630;color:#e5edff;border:1px solid #45669b}.status{padding:12px;border-radius:10px;background:#0b1630;margin-top:12px;font-size:14px;line-height:1.5}
+    .ok{background:#00843D;color:#ffffff}.err{background:#7f1d1d;color:#fee2e2}
+  </style>
 </head>
 <body>
-<main class="wrap"><section class="panel">
-<h1>Scanner QR Code IPM</h1>
-<p>Izinkan akses kamera, lalu arahkan QR Code peserta ke area pemindaian. Setelah terbaca, hasil dikirim kembali ke dashboard absensi.</p>
-<label for="camera-select" class="small">Pilih kamera</label>
-<select id="camera-select"><option value="">Kamera otomatis (belakang)</option></select>
-<div id="reader"></div>
-<div class="actions">
-<button id="start-btn" type="button">Mulai Kamera</button>
-<button id="stop-btn" type="button" class="secondary" disabled>Hentikan</button>
-<button id="back-btn" type="button" class="secondary">Kembali ke Dashboard</button>
-</div>
-<div id="status" role="status">Siap. Tekan “Mulai Kamera” untuk meminta izin kamera.</div>
-<p class="small">Akses kamera memerlukan HTTPS dan izin kamera dari browser.</p>
-</section></main>
+  <main class="wrap">
+    <h1>Scanner QR Code IPM</h1>
+    <p class="muted">Arahkan kamera ke QR Code peserta. Hasil pemindaian akan dikirim kembali ke halaman absensi Musycab.</p>
+    <select id="camera-select" aria-label="Pilih kamera"><option value="">Kamera akan dimuat…</option></select>
+    <div id="reader"></div>
+    <button id="start-btn" type="button">Mulai Scan</button>
+    <button id="stop-btn" type="button" class="secondary" disabled>Hentikan Kamera</button>
+    <div id="status" class="status">Menunggu kamera. Tekan “Mulai Scan” dan izinkan akses kamera.</div>
+  </main>
 <script>
 (() => {
   const params = new URLSearchParams(location.search);
   const returnOrigin = params.get('returnOrigin');
+  const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbz_mA___kBP0ldvCj4uxTOZuat2EcrgNAGXQhjtxW37QzchIaKOkezHnOf7fZLR5W0y/exec';
+  const SCANNER_PIN = 'PASTE_SCANNER_PIN_HERE';
+  const SESSION_ID = params.get('sessionId') || 'SESI_1';
   const statusEl = document.getElementById('status');
+  const select = document.getElementById('camera-select');
   const startBtn = document.getElementById('start-btn');
   const stopBtn = document.getElementById('stop-btn');
-  const cameraSelect = document.getElementById('camera-select');
   let scanner = null;
   let cameras = [];
-  let sending = false;
-  let restartTimer = null;
-  let lastText = '';
-  let lastSentAt = 0;
+  let sent = false;
 
-  function setStatus(message, kind) {
+  function status(message, type) {
     statusEl.textContent = message;
-    statusEl.className = kind || '';
+    statusEl.className = 'status' + (type ? ' ' + type : '');
+  }
+  function validReturnOrigin(value) {
+    try {
+      const u = new URL(value);
+      return u.protocol === 'https:' && u.origin === value.replace(/\/$/, '');
+    } catch (e) { return false; }
+  }
+  if (!WEB_APP_URL.startsWith('https://script.google.com/macros/s/') || SCANNER_PIN.length < 32) {
+    status('Konfigurasi URL Web App atau SCANNER_PIN belum diisi pada file scanner.', 'err');
+    startBtn.disabled = true;
+    throw new Error('Konfigurasi scanner belum lengkap.');
   }
 
-  async function stopCamera() {
-    const active = scanner;
-    scanner = null;
-    if (active) {
-      try { await active.stop(); } catch (e) {}
-      try { await active.clear(); } catch (e) {}
+  function sendToAttendanceServer(participantId) {
+    return new Promise((resolve, reject) => {
+      const callbackName = 'ipmScanCallback';
+      const timeout = setTimeout(() => { cleanup(); reject(new Error('Server tidak merespons. Periksa koneksi internet.')); }, 15000);
+      function cleanup() { clearTimeout(timeout); delete window[callbackName]; if (script.parentNode) script.parentNode.removeChild(script); }
+      window[callbackName] = result => { cleanup(); resolve(result); };
+      const script = document.createElement('script');
+      const query = new URLSearchParams({ action:'scan', pin:SCANNER_PIN, id:participantId, sessionId:SESSION_ID, callback:callbackName, _:String(Date.now()) });
+      script.onerror = () => { cleanup(); reject(new Error('Tidak dapat menghubungi endpoint Apps Script.')); };
+      script.src = WEB_APP_URL + '?' + query.toString();
+      document.head.appendChild(script);
+    });
+  }
+
+  async function loadCameras() {
+    try {
+      cameras = await Html5Qrcode.getCameras();
+      select.innerHTML = '';
+      if (!cameras.length) throw new Error('Tidak ada kamera yang terdeteksi.');
+      cameras.forEach((camera, index) => {
+        const option = document.createElement('option');
+        option.value = camera.id;
+        option.textContent = camera.label || ('Kamera ' + (index + 1));
+        select.appendChild(option);
+      });
+      const back = cameras.find(c => /back|rear|environment|belakang/i.test(c.label || ''));
+      if (back) select.value = back.id;
+      status('Kamera ditemukan. Tekan “Mulai Scan” untuk memulai.', 'ok');
+    } catch (err) {
+      status('Tidak dapat mengakses daftar kamera: ' + (err.message || err) + '. Pastikan situs dibuka melalui HTTPS dan izin kamera diaktifkan.', 'err');
+    }
+  }
+
+  async function start() {
+    if (scanner) return;
+    if (typeof Html5Qrcode === 'undefined') {
+      status('Library pemindai gagal dimuat. Periksa koneksi internet lalu muat ulang halaman.', 'err');
+      return;
+    }
+    startBtn.disabled = true;
+    try {
+      await loadCameras();
+      scanner = new Html5Qrcode('reader');
+      const cameraId = select.value || { facingMode: 'environment' };
+      await scanner.start(cameraId, {
+        fps: 12,
+        qrbox: (width, height) => {
+          const size = Math.floor(Math.min(width, height) * 0.78);
+          return { width: size, height: size };
+        },
+        aspectRatio: 1
+      }, async decodedText => {
+        if (sent) return;
+        sent = true;
+        status('QR terbaca. Mengirim ke server absensi…', 'ok');
+        try {
+          const idMatch = String(decodedText || '').toUpperCase().match(/IPM-\d+/);
+          if (!idMatch) throw new Error('QR tidak memuat ID peserta IPM yang valid.');
+          const result = await sendToAttendanceServer(idMatch[0]);
+          status((result.success ? 'BERHASIL: ' : 'GAGAL: ') + (result.message || 'Tidak ada keterangan.'), result.success ? 'ok' : 'err');
+        } catch (err) {
+          status('Pengiriman gagal: ' + (err.message || err), 'err');
+        }
+        // Kamera tetap aktif; jeda singkat mencegah QR yang sama terbaca berulang.
+        setTimeout(() => { sent = false; status('Siap memindai peserta berikutnya.', 'ok'); }, 1800);
+      }, () => {});
+      stopBtn.disabled = false;
+      status('Kamera aktif. Arahkan QR Code ke dalam kotak pemindai.', 'ok');
+    } catch (err) {
+      console.error(err);
+      scanner = null;
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      status('Kamera gagal dijalankan: ' + (err.message || err) + '. Periksa izin kamera browser.', 'err');
+    }
+  }
+  async function stop() {
+    if (scanner) {
+      try { await scanner.stop(); } catch (e) {}
+      try { scanner.clear(); } catch (e) {}
+      scanner = null;
     }
     startBtn.disabled = false;
     stopBtn.disabled = true;
+    status('Kamera dihentikan. Tekan “Mulai Scan” untuk mencoba lagi.');
   }
-
-  async function startCamera() {
-    if (scanner || sending) return;
-    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-      setStatus('Kamera memerlukan halaman HTTPS dan browser yang mendukung akses kamera.', 'bad');
-      return;
-    }
-    if (!returnOrigin || !window.opener || window.opener.closed) {
-      setStatus('Dashboard tidak terhubung. Buka scanner melalui tombol Scanner Eksternal pada dashboard.', 'bad');
-      return;
-    }
-    try {
-      cameras = await Html5Qrcode.getCameras();
-      cameraSelect.innerHTML = '<option value="">Kamera belakang (otomatis)</option>';
-      cameras.forEach((cam, i) => {
-        const option = document.createElement('option');
-        option.value = cam.id;
-        option.textContent = cam.label || ('Kamera ' + (i + 1));
-        cameraSelect.appendChild(option);
-      });
-
-      const activeScanner = new Html5Qrcode('reader', {
-        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE]
-      });
-      scanner = activeScanner;
-      const cameraConfig = cameraSelect.value || { facingMode: 'environment' };
-      await activeScanner.start(cameraConfig, {
-        fps: 12,
-        qrbox: { width: 250, height: 250 },
-        aspectRatio: 1
-      }, async decodedText => {
-        const now = Date.now();
-        if (sending || (decodedText === lastText && now - lastSentAt < 2500)) return;
-        sending = true;
-        lastText = decodedText;
-        lastSentAt = now;
-        setStatus('QR terbaca. Mengirim data ke dashboard Admin...', 'ok');
-        await stopCamera();
-
-        if (!window.opener || window.opener.closed) {
-          sending = false;
-          setStatus('Dashboard terputus. Buka kembali scanner dari dashboard.', 'bad');
-          return;
-        }
-        window.opener.postMessage({ type: 'IPM_QR_SCAN', text: decodedText }, returnOrigin);
-        setStatus('QR terkirim. Menunggu hasil pencatatan dari dashboard...', 'ok');
-      }, () => {});
-
-      startBtn.disabled = true;
-      stopBtn.disabled = false;
-      setStatus('Kamera aktif. Arahkan QR Code peserta ke kotak pemindaian.', 'ok');
-    } catch (err) {
-      console.error(err);
-      if (scanner) {
-        const failed = scanner;
-        scanner = null;
-        try { await failed.stop(); } catch (e) {}
-        try { await failed.clear(); } catch (e) {}
-      }
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
-      setStatus('Kamera gagal dibuka: ' + (err?.message || err) + '. Periksa izin kamera.', 'bad');
-    }
-  }
-
-  // Dashboard mengirim hasil setelah server menyimpan / menolak absensi.
-  window.addEventListener('message', event => {
-    if (event.origin !== returnOrigin || event.source !== window.opener) return;
-    const data = event.data || {};
-    if (data.type !== 'IPM_ATTENDANCE_RESULT') return;
-
-    const detail = data.name ? (' · ' + data.name + ' (' + (data.id || '-') + ')') : '';
-    const session = data.session ? (' · ' + data.session) : '';
-    setStatus((data.success ? 'BERHASIL: ' : 'PERINGATAN: ') + (data.message || 'Hasil absensi diterima.') + detail + session,
-      data.success ? 'ok' : 'bad');
-
-    sending = false;
-    if (restartTimer) clearTimeout(restartTimer);
-    // Kamera diaktifkan kembali otomatis agar siap untuk peserta berikutnya.
-    restartTimer = setTimeout(() => {
-      if (!document.hidden && !scanner) startCamera();
-    }, 1200);
-  });
-
-  startBtn.addEventListener('click', startCamera);
-  stopBtn.addEventListener('click', stopCamera);
-  cameraSelect.addEventListener('change', async () => {
-    if (scanner) {
-      await stopCamera();
-      await startCamera();
-    }
-  });
-  document.getElementById('back-btn').addEventListener('click', async () => {
-    await stopCamera();
-    if (window.opener && !window.opener.closed) window.close();
-    else history.back();
-  });
-  window.addEventListener('beforeunload', () => {
-    if (restartTimer) clearTimeout(restartTimer);
-    if (scanner) { try { scanner.stop(); } catch (e) {} }
-  });
+  startBtn.addEventListener('click', start);
+  stopBtn.addEventListener('click', stop);
+  window.addEventListener('beforeunload', () => { if (scanner) { try { scanner.stop(); } catch (e) {} } });
 })();
 </script>
-</body></html>
+</body>
+</html>
